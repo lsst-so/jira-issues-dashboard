@@ -1,14 +1,11 @@
-"""Sphinx configuration file for an LSST stack package.
-
-This configuration only affects single-package Sphinx documentation builds.
-For more information, see:
-https://developer.lsst.io/stack/building-single-package-docs.html
-"""
-
-from documenteer.conf.pipelinespkg import *
-
+"""Sphinx configuration for the Jira Issues Dashboard documentation."""
 
 project = "jira-issues-dashboard"
-html_theme_options["logotext"] = project
 html_title = project
 html_short_title = project
+
+extensions = []
+templates_path = ["_templates"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+
+html_theme = "alabaster"
