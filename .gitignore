@@ -1,3 +1,4 @@
+# Rubin/SCons build products
 .sconsign.dblite
 config.log
 .sconf_temp
@@ -5,7 +6,6 @@ config.log
 *.os
 *.so
 *.cfgc
-*.pyc
 *_wrap.cc
 *Lib.py
 
@@ -13,9 +13,43 @@ config.log
 version.py
 bin/
 
-# Pytest
-tests/.tests
-pytest_session.txt
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments and local environment files
+.venv/
+venv/
+.env
+.env.*
+
+# Local Streamlit credentials/state
+.streamlit/secrets.toml
+.streamlit/secrets*.toml
+!.streamlit/secrets.toml.example
+
+# OS/editor junk
+.DS_Store
+.vscode/
+.idea/
+
+# Logs, test caches, and coverage
+*.log
 .cache/
-.pytest_cache
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 .coverage
+htmlcov/
+pytest_session.txt
+tests/.tests
+
+# Build outputs / packaging
+build/
+dist/
+*.egg-info/
+
+# Local Jira/cache data
+/data/
+data/*.json

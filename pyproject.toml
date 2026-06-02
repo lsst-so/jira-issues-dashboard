@@ -1,3 +1,65 @@
 # Pytest configuration required to prevent pytest from looking for
-# configurations in parent directories. Can be empty.
+# configurations in parent directories.
 [tool.pytest.ini_options]
+
+[tool.ruff]
+line-length = 110
+# Ruff used for linting only; formatting handled by Black.
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "C4"]
+ignore = ["E203"]
+
+[tool.black]
+line-length = 110
+
+[tool.mypy]
+python_version = "3.13"
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
+strict_optional = true
+check_untyped_defs = true
+no_implicit_reexport = true
+show_error_codes = true
+
+[project]
+name = "jira-issues-dashboard"
+version = "0.1.0"
+requires-python = ">=3.13.11"
+dependencies = [
+    "streamlit==1.52.2",
+    "jira==3.10.5",
+    "pandas==2.3.3",
+    "numpy==2.4.0",
+    "pyarrow==22.0.0",
+    "pydeck==0.9.1",
+    "altair==6.0.0",
+    "matplotlib==3.10.8",
+    "wordcloud==1.9.5",
+    "requests==2.32.5",
+    "python-dateutil==2.9.0.post0",
+    "pytz==2025.2",
+    "tzdata==2025.3",
+    "PyYAML==6.0.3",
+    "tenacity==9.1.2",
+    "tomli==2.3.0",
+    "plotly==6.5.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.2",
+    "pre-commit>=3.7.1",
+    "ruff==0.5.5",
+    "black==24.3.0",
+]
+
+[build-system]
+requires = ["setuptools>=80", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["jira_app*"]
+exclude = ["tests*"]
