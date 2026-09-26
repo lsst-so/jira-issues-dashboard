@@ -98,6 +98,27 @@ COLUMN_METADATA: dict[str, tuple[str, str, str | None]] = {
     "activity_type": ("Type", "Type of activity (Comment, Status Change, Field Change).", None),
     "author": ("Author", "Person who performed the activity.", None),
     "details": ("Details", "Summary of the change or comment content.", None),
+    # Attention score columns (Priority-Age Diagnostics)
+    "attention_score_age": (
+        "Age Score",
+        "Attention score based on priority × days open. Higher = needs attention.",
+        "int",
+    ),
+    "Age Score": (
+        "Age Score",
+        "Attention score based on priority × days open. Higher = needs attention.",
+        "int",
+    ),
+    "attention_score_inactivity": (
+        "Inactivity Score",
+        "Attention score based on priority × days since update. Higher = needs attention.",
+        "int",
+    ),
+    "Inactivity Score": (
+        "Inactivity Score",
+        "Attention score based on priority × days since update. Higher = needs attention.",
+        "int",
+    ),
 }
 
 

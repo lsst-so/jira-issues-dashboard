@@ -15,6 +15,16 @@ from jira_app.analytics.aggregations.obs import (
     aggregate_by_obs_system,
 )
 from jira_app.analytics.metrics.activity import normalize_timestamp
+from jira_app.analytics.metrics.priority_age import (
+    PRIORITY_ORDER,
+    compute_attention_scores,
+    compute_attention_threshold,
+    filter_open_tickets,
+    has_hierarchy_data,
+    median_age_heatmap,
+    priority_age_by_group,
+    priority_age_distribution,
+)
 from jira_app.analytics.metrics.status_flow import build_status_duration_frame
 from jira_app.app import register_page
 from jira_app.core.config import (
@@ -408,6 +418,8 @@ def render():
         st.session_state.top_n = 15
     if "warn_age" not in st.session_state:
         st.session_state.warn_age = DEFAULT_WARN_AGE_DAYS
+    if "attention_percentile" not in st.session_state:
+        st.session_state.attention_percentile = 90  # Top 10% by default
     if "weight_comment" not in st.session_state:
         st.session_state.weight_comment = 2.0
     if "weight_status" not in st.session_state:
@@ -447,6 +459,18 @@ def render():
             min_value=1,
             max_value=90,
             value=st.session_state.warn_age,
+        )
+
+        st.session_state.attention_percentile = st.number_input(
+            "Attention threshold (percentile)",
+            min_value=50,
+            max_value=99,
+            value=st.session_state.attention_percentile,
+            step=5,
+            help=(
+                "Tickets with attention score (priority × days) above this percentile "
+                "are flagged in Priority-Age heatmaps. 90 = top 10%."
+            ),
         )
 
         with st.expander("Activity weighting", expanded=False):
@@ -1456,6 +1480,630 @@ def render():
                 else:
                     st.info(f"No data available to plot {chart_label.lower()}.")
 
+    # Priority-Age Diagnostics section
+    st.markdown("---")
+    st.subheader("Priority-Age Diagnostics")
+    st.caption(
+        "Analyze how ticket age and inactivity relate to priority levels for open tickets. "
+        "Use this to identify where high-priority work may be aging."
+    )
+
+    open_df = filter_open_tickets(df)
+
+    # Compute attention threshold from percentile (used by heatmaps and attention tables)
+    attention_pct = float(st.session_state.attention_percentile)
+    attention_threshold_age = compute_attention_threshold(
+        open_df, percentile=attention_pct, metric_col="days_open"
+    )
+    attention_threshold_inactivity = compute_attention_threshold(
+        open_df, percentile=attention_pct, metric_col="days_since_update"
+    )
+
+    if open_df.empty:
+        st.info("No open tickets in the current dataset.")
+    else:
+        # Tickets Requiring Attention section (expanded by default - actionable output)
+        with st.expander("Tickets Requiring Attention", expanded=True):
+            st.caption(
+                f"Tickets in the top {100 - attention_pct:.0f}% by attention score (priority × days). "
+                "These are higher-priority tickets that have been open or inactive longer."
+            )
+
+            attention_df = compute_attention_scores(open_df, top_n=20, min_score=attention_threshold_age)
+
+            if attention_df.empty:
+                st.info("No tickets exceed the attention threshold.")
+            else:
+                attention_tab_age, attention_tab_inactivity = st.tabs(["By Age Score", "By Inactivity Score"])
+
+                with attention_tab_age:
+                    display_leaderboard(
+                        attention_df,
+                        title="Top by Age Score",
+                        server=server_url,
+                        top_n=15,
+                        metric_col="attention_score_age",
+                        metric_label="Age Score",
+                        extra_cols=[
+                            "days_open",
+                            "days_since_update",
+                            "priority",
+                            "status",
+                            "assignee",
+                            "time_lost",
+                            "obs_system",
+                            "obs_subsystem",
+                        ],
+                        caption=(
+                            "Score = priority_value × days_open. "
+                            "Blocker=5, Critical=4, High=3, Medium=2, Low=1."
+                        ),
+                    )
+
+                with attention_tab_inactivity:
+                    display_leaderboard(
+                        attention_df,
+                        title="Top by Inactivity Score",
+                        server=server_url,
+                        top_n=15,
+                        metric_col="attention_score_inactivity",
+                        metric_label="Inactivity Score",
+                        extra_cols=[
+                            "days_since_update",
+                            "days_open",
+                            "priority",
+                            "status",
+                            "assignee",
+                            "time_lost",
+                            "obs_system",
+                            "obs_subsystem",
+                        ],
+                        caption=(
+                            "Score = priority_value × days_since_update. "
+                            "Blocker=5, Critical=4, High=3, Medium=2, Low=1."
+                        ),
+                    )
+
+        # Priority-Age Analysis section (collapsed - supporting analysis)
+        with st.expander("Priority-Age Analysis", expanded=False):
+            st.caption(
+                "Distribution of ticket age by priority, correlations by hierarchy group, "
+                "and median age heatmaps."
+            )
+
+            # 1. Priority vs age distributions (side-by-side)
+            days_open_dist, days_open_corr = priority_age_distribution(open_df, metric_col="days_open")
+            days_update_dist, days_update_corr = priority_age_distribution(
+                open_df, metric_col="days_since_update"
+            )
+
+            if days_open_dist.empty and days_update_dist.empty:
+                st.info("Priority-age distribution data not available.")
+            else:
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown("**Priority vs Days Open**")
+                    if not days_open_dist.empty:
+                        priority_order_present = [
+                            p for p in PRIORITY_ORDER if p in days_open_dist["priority"].unique()
+                        ]
+                        box_stats = (
+                            days_open_dist.groupby("priority")["days_open"]
+                            .agg(
+                                count="count",
+                                min_val="min",
+                                q1=lambda x: x.quantile(0.25),
+                                median="median",
+                                q3=lambda x: x.quantile(0.75),
+                                max_val="max",
+                            )
+                            .reset_index()
+                        )
+                        box_tooltip = [
+                            alt.Tooltip("priority:N", title="Priority"),
+                            alt.Tooltip("count:Q", title="Tickets"),
+                            alt.Tooltip("min_val:Q", title="Min", format=".0f"),
+                            alt.Tooltip("q1:Q", title="Q1", format=".0f"),
+                            alt.Tooltip("median:Q", title="Median", format=".0f"),
+                            alt.Tooltip("q3:Q", title="Q3", format=".0f"),
+                            alt.Tooltip("max_val:Q", title="Max", format=".0f"),
+                        ]
+                        box_rect = (
+                            alt.Chart(box_stats)
+                            .mark_bar(size=20, opacity=0.6)
+                            .encode(
+                                x=alt.X("priority:N", sort=priority_order_present, title="Priority"),
+                                y=alt.Y("q1:Q", title="Days Open", axis=alt.Axis(format=".0f")),
+                                y2="q3:Q",
+                                color=alt.Color(
+                                    "priority:N",
+                                    sort=priority_order_present,
+                                    legend=None,
+                                    scale=alt.Scale(scheme="tableau10"),
+                                ),
+                                tooltip=box_tooltip,
+                            )
+                        )
+                        median_line = (
+                            alt.Chart(box_stats)
+                            .mark_tick(size=20, thickness=2, color="black")
+                            .encode(
+                                x=alt.X("priority:N", sort=priority_order_present),
+                                y=alt.Y("median:Q"),
+                                tooltip=box_tooltip,
+                            )
+                        )
+                        whisker = (
+                            alt.Chart(box_stats)
+                            .mark_rule()
+                            .encode(
+                                x=alt.X("priority:N", sort=priority_order_present),
+                                y=alt.Y("min_val:Q"),
+                                y2="max_val:Q",
+                                tooltip=box_tooltip,
+                            )
+                        )
+                        points = (
+                            alt.Chart(days_open_dist)
+                            .mark_circle(opacity=0.4, size=30)
+                            .encode(
+                                x=alt.X("priority:N", sort=priority_order_present),
+                                y=alt.Y("days_open:Q"),
+                                color=alt.Color("priority:N", sort=priority_order_present, legend=None),
+                                tooltip=alt.value(None),
+                            )
+                        )
+                        chart = (whisker + box_rect + median_line + points).properties(height=400)
+                        st.altair_chart(chart, width="stretch")
+                    else:
+                        st.info("Days open data not available.")
+
+                with col2:
+                    st.markdown("**Priority vs Days Since Update**")
+                    if not days_update_dist.empty:
+                        priority_order_present = [
+                            p for p in PRIORITY_ORDER if p in days_update_dist["priority"].unique()
+                        ]
+                        box_stats = (
+                            days_update_dist.groupby("priority")["days_since_update"]
+                            .agg(
+                                count="count",
+                                min_val="min",
+                                q1=lambda x: x.quantile(0.25),
+                                median="median",
+                                q3=lambda x: x.quantile(0.75),
+                                max_val="max",
+                            )
+                            .reset_index()
+                        )
+                        box_tooltip = [
+                            alt.Tooltip("priority:N", title="Priority"),
+                            alt.Tooltip("count:Q", title="Tickets"),
+                            alt.Tooltip("min_val:Q", title="Min", format=".0f"),
+                            alt.Tooltip("q1:Q", title="Q1", format=".0f"),
+                            alt.Tooltip("median:Q", title="Median", format=".0f"),
+                            alt.Tooltip("q3:Q", title="Q3", format=".0f"),
+                            alt.Tooltip("max_val:Q", title="Max", format=".0f"),
+                        ]
+                        box_rect = (
+                            alt.Chart(box_stats)
+                            .mark_bar(size=20, opacity=0.6)
+                            .encode(
+                                x=alt.X("priority:N", sort=priority_order_present, title="Priority"),
+                                y=alt.Y("q1:Q", title="Days Since Update", axis=alt.Axis(format=".0f")),
+                                y2="q3:Q",
+                                color=alt.Color(
+                                    "priority:N",
+                                    sort=priority_order_present,
+                                    legend=None,
+                                    scale=alt.Scale(scheme="tableau10"),
+                                ),
+                                tooltip=box_tooltip,
+                            )
+                        )
+                        median_line = (
+                            alt.Chart(box_stats)
+                            .mark_tick(size=20, thickness=2, color="black")
+                            .encode(
+                                x=alt.X("priority:N", sort=priority_order_present),
+                                y=alt.Y("median:Q"),
+                                tooltip=box_tooltip,
+                            )
+                        )
+                        whisker = (
+                            alt.Chart(box_stats)
+                            .mark_rule()
+                            .encode(
+                                x=alt.X("priority:N", sort=priority_order_present),
+                                y=alt.Y("min_val:Q"),
+                                y2="max_val:Q",
+                                tooltip=box_tooltip,
+                            )
+                        )
+                        points = (
+                            alt.Chart(days_update_dist)
+                            .mark_circle(opacity=0.4, size=30)
+                            .encode(
+                                x=alt.X("priority:N", sort=priority_order_present),
+                                y=alt.Y("days_since_update:Q"),
+                                color=alt.Color("priority:N", sort=priority_order_present, legend=None),
+                                tooltip=alt.value(None),
+                            )
+                        )
+                        chart = (whisker + box_rect + median_line + points).properties(height=400)
+                        st.altair_chart(chart, width="stretch")
+                    else:
+                        st.info("Days since update data not available.")
+
+                st.caption(
+                    "**How to interpret:** Each box shows the interquartile range (IQR) with median line. "
+                    "Whiskers extend to min/max values. Individual tickets shown as points. "
+                    "Hover over the box area to see statistics."
+                )
+
+            # 2. Priority-age relationship by hierarchy group
+            st.markdown("---")
+            st.markdown("##### Priority-Age by Hierarchy Group")
+            hierarchy_options = {
+                "OBS System": "obs_system",
+                "OBS Subsystem": "obs_subsystem",
+                "OBS Component": "obs_component",
+            }
+            available_hierarchies = {
+                label: col for label, col in hierarchy_options.items() if has_hierarchy_data(open_df, col)
+            }
+
+            if available_hierarchies:
+                st.caption(
+                    "Spearman correlation between priority and days open (or days since update), "
+                    "broken down by hierarchy. Heatmaps show median values by group and priority."
+                )
+
+                if "priority_age_top_n" not in st.session_state:
+                    st.session_state.priority_age_top_n = 15
+                priority_age_top_n = st.number_input(
+                    "Show top N groups",
+                    min_value=5,
+                    max_value=100,
+                    step=5,
+                    key="priority_age_top_n",
+                )
+                priority_age_top_n = int(priority_age_top_n)
+
+                hierarchy_tabs = st.tabs(list(available_hierarchies.keys()))
+
+                for h_tab, (h_label, h_col) in zip(
+                    hierarchy_tabs, available_hierarchies.items(), strict=False
+                ):
+                    with h_tab:
+                        group_counts = open_df[h_col].dropna().astype(str).str.strip().value_counts()
+                        top_groups = group_counts.head(priority_age_top_n).index.tolist()
+
+                        corr_open = priority_age_by_group(open_df, h_col, metric_col="days_open")
+                        corr_update = priority_age_by_group(open_df, h_col, metric_col="days_since_update")
+
+                        if corr_open.empty and corr_update.empty:
+                            st.info(f"Insufficient data for {h_label} correlations.")
+                        else:
+                            corr_col1, corr_col2 = st.columns(2)
+
+                            with corr_col1:
+                                st.markdown("**Spearman ρ: Days Open**")
+                                if not corr_open.empty:
+                                    corr_open = corr_open[
+                                        corr_open["group"].isin(top_groups + ["All groups"])
+                                    ]
+                                    corr_open["color_cat"] = corr_open.apply(
+                                        lambda r: (
+                                            "Pooled across all groups"
+                                            if r["is_pooled"]
+                                            else (
+                                                "Significant + (p<0.05)"
+                                                if r["significant"] and r["rho"] and r["rho"] > 0
+                                                else (
+                                                    "Significant − (p<0.05)"
+                                                    if r["significant"] and r["rho"] and r["rho"] < 0
+                                                    else "Not significant (p≥0.05)"
+                                                )
+                                            )
+                                        ),
+                                        axis=1,
+                                    )
+                                    color_scale = alt.Scale(
+                                        domain=[
+                                            "Significant + (p<0.05)",
+                                            "Significant − (p<0.05)",
+                                            "Not significant (p≥0.05)",
+                                            "Pooled across all groups",
+                                        ],
+                                        range=["#4c78a8", "#e45756", "#72b7b2", "#f58518"],
+                                    )
+                                    sort_order = ["All groups"] + [g for g in top_groups if g != "All groups"]
+                                    # Fixed step per bar - chart height scales automatically
+                                    chart = (
+                                        alt.Chart(corr_open)
+                                        .mark_bar()
+                                        .encode(
+                                            x=alt.X(
+                                                "rho:Q",
+                                                title="ρ (+ = older at higher priority)",
+                                                scale=alt.Scale(domain=[-1, 1]),
+                                            ),
+                                            y=alt.Y(
+                                                "group:N",
+                                                sort=sort_order,
+                                                title=None,
+                                                axis=alt.Axis(labelLimit=200, labelOverlap=False),
+                                            ),
+                                            color=alt.Color(
+                                                "color_cat:N",
+                                                title="Significance",
+                                                scale=color_scale,
+                                            ),
+                                            tooltip=[
+                                                alt.Tooltip("group:N", title=h_label),
+                                                alt.Tooltip("rho:Q", title="ρ", format=".3f"),
+                                                alt.Tooltip("p_value:Q", title="p-value", format=".4f"),
+                                                alt.Tooltip("n:Q", title="Tickets"),
+                                            ],
+                                        )
+                                        .properties(height=alt.Step(20))
+                                    )
+                                    st.altair_chart(chart, width="stretch")
+                                else:
+                                    st.info("No correlation data available.")
+
+                            with corr_col2:
+                                st.markdown("**Spearman ρ: Days Since Update**")
+                                if not corr_update.empty:
+                                    corr_update = corr_update[
+                                        corr_update["group"].isin(top_groups + ["All groups"])
+                                    ]
+                                    corr_update["color_cat"] = corr_update.apply(
+                                        lambda r: (
+                                            "Pooled across all groups"
+                                            if r["is_pooled"]
+                                            else (
+                                                "Significant + (p<0.05)"
+                                                if r["significant"] and r["rho"] and r["rho"] > 0
+                                                else (
+                                                    "Significant − (p<0.05)"
+                                                    if r["significant"] and r["rho"] and r["rho"] < 0
+                                                    else "Not significant (p≥0.05)"
+                                                )
+                                            )
+                                        ),
+                                        axis=1,
+                                    )
+                                    color_scale = alt.Scale(
+                                        domain=[
+                                            "Significant + (p<0.05)",
+                                            "Significant − (p<0.05)",
+                                            "Not significant (p≥0.05)",
+                                            "Pooled across all groups",
+                                        ],
+                                        range=["#4c78a8", "#e45756", "#72b7b2", "#f58518"],
+                                    )
+                                    sort_order = ["All groups"] + [g for g in top_groups if g != "All groups"]
+                                    # Fixed step per bar - chart height scales automatically
+                                    chart = (
+                                        alt.Chart(corr_update)
+                                        .mark_bar()
+                                        .encode(
+                                            x=alt.X(
+                                                "rho:Q",
+                                                title="ρ (+ = staler at higher priority)",
+                                                scale=alt.Scale(domain=[-1, 1]),
+                                            ),
+                                            y=alt.Y(
+                                                "group:N",
+                                                sort=sort_order,
+                                                title=None,
+                                                axis=alt.Axis(labelLimit=200, labelOverlap=False),
+                                            ),
+                                            color=alt.Color(
+                                                "color_cat:N",
+                                                title="Significance",
+                                                scale=color_scale,
+                                            ),
+                                            tooltip=[
+                                                alt.Tooltip("group:N", title=h_label),
+                                                alt.Tooltip("rho:Q", title="ρ", format=".3f"),
+                                                alt.Tooltip("p_value:Q", title="p-value", format=".4f"),
+                                                alt.Tooltip("n:Q", title="Tickets"),
+                                            ],
+                                        )
+                                        .properties(height=alt.Step(20))
+                                    )
+                                    st.altair_chart(chart, width="stretch")
+                                else:
+                                    st.info("No correlation data available.")
+
+                        # Heatmaps with ticket details
+                        st.markdown("---")
+                        heatmap_open = median_age_heatmap(
+                            open_df,
+                            h_col,
+                            metric_col="days_open",
+                            top_n_groups=priority_age_top_n,
+                            attention_score_threshold=attention_threshold_age,
+                        )
+                        heatmap_update = median_age_heatmap(
+                            open_df,
+                            h_col,
+                            metric_col="days_since_update",
+                            top_n_groups=priority_age_top_n,
+                            attention_score_threshold=attention_threshold_inactivity,
+                        )
+
+                        if heatmap_open.empty and heatmap_update.empty:
+                            st.info("Insufficient data for median heatmaps.")
+                        else:
+                            heat_col1, heat_col2 = st.columns(2)
+                            heatmap_height = max(200, len(top_groups) * 30)
+
+                            with heat_col1:
+                                st.markdown("**Median Days Open by Group × Priority**")
+                                if not heatmap_open.empty:
+                                    heatmap_open = heatmap_open.copy()
+                                    heatmap_open["cell_text"] = heatmap_open.apply(
+                                        lambda r: (
+                                            f"⚠️ {r['median']:.0f} ({int(r['count'])})"
+                                            if r.get("attention_count", 0) > 0
+                                            else f"{r['median']:.0f} ({int(r['count'])})"
+                                        ),
+                                        axis=1,
+                                    )
+                                    priority_order_present = [
+                                        p for p in PRIORITY_ORDER if p in heatmap_open["priority"].unique()
+                                    ]
+
+                                    heat = (
+                                        alt.Chart(heatmap_open)
+                                        .mark_rect()
+                                        .encode(
+                                            x=alt.X(
+                                                "priority:N",
+                                                sort=priority_order_present,
+                                                title="Priority",
+                                            ),
+                                            y=alt.Y(
+                                                "group:N",
+                                                sort=top_groups,
+                                                title=None,
+                                                axis=alt.Axis(labelLimit=200, labelOverlap=False),
+                                            ),
+                                            color=alt.Color(
+                                                "median:Q",
+                                                title="Median Days",
+                                                scale=alt.Scale(scheme="blues"),
+                                            ),
+                                            tooltip=[
+                                                alt.Tooltip("group:N", title=h_label),
+                                                alt.Tooltip("priority:N", title="Priority"),
+                                                alt.Tooltip("median:Q", title="Median Days", format=".1f"),
+                                                alt.Tooltip("max_days:Q", title="Max Days", format=".1f"),
+                                                alt.Tooltip("count:Q", title="Tickets"),
+                                                alt.Tooltip(
+                                                    "attention_count:Q",
+                                                    title="Need Attention",
+                                                ),
+                                                alt.Tooltip("tickets_info:N", title="Top Tickets"),
+                                            ],
+                                        )
+                                    )
+                                    text = (
+                                        alt.Chart(heatmap_open)
+                                        .mark_text(fontSize=9)
+                                        .encode(
+                                            x=alt.X("priority:N", sort=priority_order_present),
+                                            y=alt.Y("group:N", sort=top_groups),
+                                            text="cell_text:N",
+                                            color=alt.condition(
+                                                alt.datum.median > heatmap_open["median"].median(),
+                                                alt.value("white"),
+                                                alt.value("black"),
+                                            ),
+                                            tooltip=alt.value(None),
+                                        )
+                                    )
+                                    chart = (heat + text).properties(height=heatmap_height)
+                                    st.altair_chart(chart, width="stretch")
+                                    st.caption(
+                                        f"Top {len(top_groups)} groups. Values: median days (count). "
+                                        f"⚠️ = top {100 - attention_pct:.0f}% by attention score. "
+                                        "Hover for ticket details."
+                                    )
+                                else:
+                                    st.info("No heatmap data available.")
+
+                            with heat_col2:
+                                st.markdown("**Median Days Since Update by Group × Priority**")
+                                if not heatmap_update.empty:
+                                    heatmap_update = heatmap_update.copy()
+                                    heatmap_update["cell_text"] = heatmap_update.apply(
+                                        lambda r: (
+                                            f"⚠️ {r['median']:.0f} ({int(r['count'])})"
+                                            if r.get("attention_count", 0) > 0
+                                            else f"{r['median']:.0f} ({int(r['count'])})"
+                                        ),
+                                        axis=1,
+                                    )
+                                    priority_order_present = [
+                                        p for p in PRIORITY_ORDER if p in heatmap_update["priority"].unique()
+                                    ]
+
+                                    heat = (
+                                        alt.Chart(heatmap_update)
+                                        .mark_rect()
+                                        .encode(
+                                            x=alt.X(
+                                                "priority:N",
+                                                sort=priority_order_present,
+                                                title="Priority",
+                                            ),
+                                            y=alt.Y(
+                                                "group:N",
+                                                sort=top_groups,
+                                                title=None,
+                                                axis=alt.Axis(labelLimit=200, labelOverlap=False),
+                                            ),
+                                            color=alt.Color(
+                                                "median:Q",
+                                                title="Median Days",
+                                                scale=alt.Scale(scheme="oranges"),
+                                            ),
+                                            tooltip=[
+                                                alt.Tooltip("group:N", title=h_label),
+                                                alt.Tooltip("priority:N", title="Priority"),
+                                                alt.Tooltip("median:Q", title="Median Days", format=".1f"),
+                                                alt.Tooltip("max_days:Q", title="Max Days", format=".1f"),
+                                                alt.Tooltip("count:Q", title="Tickets"),
+                                                alt.Tooltip(
+                                                    "attention_count:Q",
+                                                    title="Need Attention",
+                                                ),
+                                                alt.Tooltip("tickets_info:N", title="Top Tickets"),
+                                            ],
+                                        )
+                                    )
+                                    text = (
+                                        alt.Chart(heatmap_update)
+                                        .mark_text(fontSize=9)
+                                        .encode(
+                                            x=alt.X("priority:N", sort=priority_order_present),
+                                            y=alt.Y("group:N", sort=top_groups),
+                                            text="cell_text:N",
+                                            color=alt.condition(
+                                                alt.datum.median > heatmap_update["median"].median(),
+                                                alt.value("white"),
+                                                alt.value("black"),
+                                            ),
+                                            tooltip=alt.value(None),
+                                        )
+                                    )
+                                    chart = (heat + text).properties(height=heatmap_height)
+                                    st.altair_chart(chart, width="stretch")
+                                    st.caption(
+                                        f"Top {len(top_groups)} groups. Values: median days (count). "
+                                        f"⚠️ = top {100 - attention_pct:.0f}% by attention score. "
+                                        "Hover for ticket details."
+                                    )
+                                else:
+                                    st.info("No heatmap data available.")
+
+                        st.caption(
+                            "**How to interpret:** Spearman ρ measures the correlation between "
+                            "priority severity (Blocker=5 to Low=1) and ticket age across all "
+                            "tickets in each group. Positive ρ means tickets tend to be older/staler "
+                            "as priority increases (potential backlogs in urgent work); negative ρ "
+                            "means higher-priority tickets tend to be younger (resolved faster or "
+                            "filed more recently); near zero means no consistent trend."
+                        )
+            else:
+                st.info("No hierarchy data available for correlation analysis.")
+
     st.markdown("---")
 
     # Tabs reordered and Summary renamed as requested
@@ -2064,7 +2712,7 @@ def render():
             if "Urgent" in available:
                 return ["Urgent"]
             # Fallback: return first available or empty
-            return available[:1] if available else []
+            return available[:1] if len(available) > 0 else []
 
         # Compute smart default: Blocker/Critical, fallback to Urgent, then first available
         default_trend_prios = _get_default_trend_priorities(available_priorities)
