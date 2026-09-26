@@ -84,7 +84,8 @@ def test_blocked_issues():
 def test_needs_attention():
     df = _sample_df()
     result = pv.needs_attention(df, "Alice", stale_days=30)
-    # Alice's open assigned issues that are blocked, stale, or high priority (Blocker/Critical)
+    # Alice's open assigned issues that are blocked, stale, or high priority
+    # (Blocker/Critical)
     # TEST-1: High priority (not Blocker/Critical) - not included
     # TEST-5: Stale (45 days) - included
     # TEST-3 is Done so not included

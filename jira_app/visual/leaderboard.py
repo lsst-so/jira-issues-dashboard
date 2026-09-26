@@ -242,7 +242,7 @@ def display_ticket_list(
 
     prepared, base_display_cols, cfg = prepare_ticket_table(table, server, extra_columns=additional_cols)
     if height is None:
-        # Default height sized to top-N rows to keep tables compact with scroll for overflow
+        # Default height fits the top-N rows; overflow scrolls to keep tables compact
         target_rows = int(st.session_state.get("top_n", 15)) if "top_n" in st.session_state else 15
         visible_rows = min(target_rows, len(prepared))
         resolved_height: int | str = max(200, 46 + visible_rows * 34)

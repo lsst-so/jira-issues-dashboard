@@ -1820,7 +1820,7 @@ def render():
                                         range=["#4c78a8", "#e45756", "#72b7b2", "#f58518"],
                                     )
                                     sort_order = ["All groups"] + [g for g in top_groups if g != "All groups"]
-                                    # Fixed step per bar - chart height scales automatically
+                                    # Fixed step per bar; chart height scales
                                     chart = (
                                         alt.Chart(corr_open)
                                         .mark_bar()
@@ -1886,7 +1886,7 @@ def render():
                                         range=["#4c78a8", "#e45756", "#72b7b2", "#f58518"],
                                     )
                                     sort_order = ["All groups"] + [g for g in top_groups if g != "All groups"]
-                                    # Fixed step per bar - chart height scales automatically
+                                    # Fixed step per bar; chart height scales
                                     chart = (
                                         alt.Chart(corr_update)
                                         .mark_bar()
@@ -2188,7 +2188,7 @@ def render():
                     else:
                         priority_options = sorted(cycle_df["priority"].unique())
                     # Ensure defaults only include priorities that exist for this window
-                    # Order priorities according to DEFAULT_TREND_PRIORITIES where possible
+                    # Order priorities by DEFAULT_TREND_PRIORITIES where possible
                     ordered_priorities = [p for p in DEFAULT_TREND_PRIORITIES if p in priority_options]
                     ordered_priorities += [p for p in priority_options if p not in ordered_priorities]
                     priority_options = ordered_priorities
@@ -2243,7 +2243,7 @@ def render():
                         stats["Mean"] = stats["Mean"].round(1)
                         stats["P90"] = stats["P90"].round(1)
 
-                        # Bar chart for cycle time by priority (exclude "All Selected" row)
+                        # Cycle time by priority (excluding the "All Selected" row)
                         chart_data = stats[stats["Priority"] != "All Selected"].copy()
                         if not chart_data.empty:
                             # Melt data for grouped bar chart
@@ -2714,7 +2714,7 @@ def render():
             # Fallback: return first available or empty
             return available[:1] if len(available) > 0 else []
 
-        # Compute smart default: Blocker/Critical, fallback to Urgent, then first available
+        # Smart default: Blocker/Critical, fallback to Urgent, then first available
         default_trend_prios = _get_default_trend_priorities(available_priorities)
 
         # Simple multiselect with smart default

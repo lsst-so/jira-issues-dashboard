@@ -95,7 +95,7 @@ def _normalize_priority_name(p: str | None) -> str:
 
 
 def _add_priority_severity(work: pd.DataFrame) -> pd.DataFrame:
-    """Add __priority_severity column using priority_value or fallback to PRIORITY_MAPPING."""
+    """Add __priority_severity from priority_value, falling back to PRIORITY_MAPPING."""
     work["__priority_normalized"] = work["priority"].apply(_normalize_priority_name)
     fallback = work["__priority_normalized"].map(lambda p: PRIORITY_MAPPING.get(p, 0))
 
@@ -161,7 +161,8 @@ def priority_age_distribution(
     Returns
     -------
     tuple[pd.DataFrame, CorrelationResult]
-        - DataFrame with columns: priority, metric value, priority_value, count per priority
+        - DataFrame with columns: priority, metric value, priority_value,
+          count per priority
         - Spearman correlation result
     """
     if df.empty or "priority" not in df.columns or metric_col not in df.columns:

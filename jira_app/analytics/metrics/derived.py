@@ -10,7 +10,8 @@ def add_derived_metrics(df: pd.DataFrame) -> pd.DataFrame:
 
     Adds the following columns:
         - time_lost_value: Numeric version of time_lost (0 if missing/invalid)
-        - total_activity_in_range: Sum of comments_in_range + status_changes + other_changes
+        - total_activity_in_range: Sum of comments_in_range + status_changes
+          + other_changes
 
     Parameters
     ----------

@@ -50,8 +50,12 @@ line-length = 110
 # Ruff used for linting only; formatting handled by Black.
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "SIM", "C4"]
+select = ["E", "F", "I", "B", "UP", "SIM", "C4", "W505"]
 ignore = ["E203"]
+
+[tool.ruff.lint.pycodestyle]
+# Match the doc-line limit enforced by flake8 in CI (setup.cfg).
+max-doc-length = 89
 
 [tool.black]
 line-length = 110

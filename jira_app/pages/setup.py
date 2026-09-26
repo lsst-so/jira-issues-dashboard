@@ -1,4 +1,4 @@
-"""Connection setup page: collect Jira credentials and initialize IssueService securely."""
+"""Connection setup page: collect Jira credentials and initialize IssueService."""
 
 from __future__ import annotations
 

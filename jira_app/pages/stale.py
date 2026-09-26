@@ -51,7 +51,7 @@ def stale_page():
                 st.info("No open issues found.")
                 return
             reporter.update("Computing aging metrics")
-            # Use shared aging metrics (consistent float precision with enrichment pipeline)
+            # Use shared aging metrics (same float precision as the enrichment pipeline)
             df = add_aging_metrics(base)
             reporter.update("Evaluating tickets for staleness")
             stale_df = compute_stale(df, stale_days)

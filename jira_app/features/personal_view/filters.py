@@ -420,7 +420,8 @@ def extract_recent_activity(
     Returns
     -------
     pd.DataFrame
-        Activity records with columns: key, summary, activity_type, author, created, details.
+        Activity records with columns: key, summary, activity_type, author, created,
+        details.
     """
     if df.empty:
         return pd.DataFrame()

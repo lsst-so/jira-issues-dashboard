@@ -237,7 +237,8 @@ class IssueService:
             else:
                 out["filtered_comments_count"] = 0
 
-        # 2) History entries unified - use pre-computed total_activity_in_range or components
+        # 2) History entries unified - use pre-computed total_activity_in_range
+        #    or its components
         if "filtered_histories_count" not in out.columns:
             if "status_changes" in out.columns and "other_changes" in out.columns:
                 out["filtered_histories_count"] = out["status_changes"] + out["other_changes"]
